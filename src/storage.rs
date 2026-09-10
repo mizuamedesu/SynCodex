@@ -446,7 +446,9 @@ pub fn inject(
     check_path(sqlite_home)?;
     let home = std::path::absolute(home)?;
     let sqlite_home = std::path::absolute(sqlite_home)?;
-    let staging = tempfile::tempdir()?;
+    // macOS exposes its temporary directory through the /var system symlink.
+    // Our own staging path must be physical before the symlink checks below.
+    let staging = tempfile::tempdir_in(fs::canonicalize(std::env::temp_dir())?)?;
     let mut changes = Vec::new();
     let mut skipped = 0;
     let mut kept_databases = 0;

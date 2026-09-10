@@ -1,0 +1,95 @@
+name: Build and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+          - os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy --target '${{ matrix.target }}'
+          rustup default stable
+          if [ '${{ runner.os }}' = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y musl-tools
+          fi
+          # macOS's standard temp directory is reached through /var, a system symlink.
+          echo "TMPDIR=$(cd "${TMPDIR:-/tmp}" && pwd -P)" >> "$GITHUB_ENV"
+      - name: Check and test
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets --target '${{ matrix.target }}' -- -D warnings
+          cargo test --locked --target '${{ matrix.target }}'
+          SYNCODEX_TEST_BINARY="target/${{ matrix.target }}/debug/syncodex" python3 tests/installer.py
+      - name: Build release
+        run: cargo build --release --locked --target '${{ matrix.target }}'
+      - name: Package
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$REF_TYPE" = tag ]; then test "$REF_NAME" = "$VERSION"; fi
+          mkdir -p package/skills/syncodex dist
+          cp "target/$TARGET/release/syncodex" package/syncodex
+          cp skills/syncodex/SKILL.md package/skills/syncodex/SKILL.md
+          cp LICENSE package/LICENSE
+          package/syncodex --version
+          if [ "$TARGET" = x86_64-unknown-linux-musl ]; then
+            file package/syncodex | grep -Eq 'statically linked|static-pie linked'
+          else
+            test "$(lipo -archs package/syncodex)" = arm64
+          fi
+          ASSET="syncodex-$VERSION-$TARGET.tar.gz"
+          tar -czf "dist/$ASSET" -C package syncodex skills/syncodex/SKILL.md LICENSE
+          (cd dist && shasum -a 256 "$ASSET" > "$ASSET.sha256")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cp install.sh dist/install.sh
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
+          else
+            gh release create "$TAG" --verify-tag --draft --title "SynCodex $TAG" --notes-file .github/release-notes.md
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release edit "$TAG" --draft=false --latest

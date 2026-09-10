@@ -4,9 +4,40 @@ Codex のローカル会話履歴をバックアップ・復元する Rust CLI�
 
 ## インストール
 
+Apple Silicon Mac と x86_64 Linux 向けに、GitHub Releases でビルド済みバイナリを配布します。Rust・sudo は不要です。
+
 ```sh
+curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | sh
+```
+
+このコマンドで本体・Codex 用スキル・Claude Code 用スキル・今後のシェルの PATH 設定をインストールします。現在のシェルには、最後に表示される `. "$HOME/.local/share/syncodex/env.sh"` を実行するか、ターミナルを開き直すと PATH が反映されます。Codex / Claude Code も再起動するとスキルを検出します。
+
+| 内容 | 既定の配置先 |
+| --- | --- |
+| バイナリ | `~/.local/bin/syncodex` |
+| Codex スキル | `~/.agents/skills/syncodex/SKILL.md` |
+| Claude Code スキル | `~/.claude/skills/syncodex/SKILL.md` |
+
+スキルは Codex では `$syncodex`、Claude Code では `/syncodex` で呼び出せます。**両方とも操作対象は Codex の履歴**です。Claude Code の会話履歴を変換するものではありません。配置先は [Codex の公式スキル仕様](https://learn.chatgpt.com/docs/build-skills) と [Claude Code の公式スキル仕様](https://code.claude.com/docs/en/skills) に従っています。
+
+インストーラーは OS / CPU を判定し、バージョン固定のアーカイブと SHA-256 をダウンロード・照合してから配置します。Linux は musl の静的リンク版、Mac は arm64 版です。Intel Mac、ARM Linux、Windows はこの配布の対象外です。
+
+```sh
+# バージョン固定、PATH の自動設定を省略
+curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
+  sh -s -- --version v0.1.0 --no-modify-path
+
+# スキルを省略・本体の配置先を変更
+curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
+  sh -s -- --bin-dir "$HOME/bin" --no-skills
+
+# ソースからビルドする場合
 cargo install --path . --locked
 ```
+
+`SYNCODEX_CODEX_SKILLS_DIR`、`SYNCODEX_CLAUDE_SKILLS_DIR` で各スキルの親ディレクトリを変更できます。Claude Code の `CLAUDE_CONFIG_DIR` も尊重します。再実行すると同じインストーラーが管理する本体・スキルを更新します。同名の自作スキルが既にある場合は停止して保持します。既存スキルの編集内容は、管理対象のスキルを更新すると置き換わります。
+
+GitHub Actions は両プラットフォームで Rust のテスト、clippy、インストーラーテストを実行します。Cargo.toml と一致する `vX.Y.Z` タグを push すると、両方のビルド完了後にアーカイブ・チェックサム・インストーラーをまとめて公開します。[ワークフロー](.github/workflows/release.yml)
 
 ## バックアップと復元
 
