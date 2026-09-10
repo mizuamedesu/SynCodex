@@ -1,0 +1,19 @@
+[package]
+name = "syncodex"
+version = "0.1.0"
+edition = "2024"
+description = "Portable Codex conversation history snapshots"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+fs2 = "0.4.3"
+rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+walkdir = "2"
+zstd = "0.14.0"
