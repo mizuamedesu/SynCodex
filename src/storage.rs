@@ -30,7 +30,7 @@ struct Entry {
     modified: Option<std::time::SystemTime>,
 }
 
-fn private_dir(path: impl AsRef<Path>) -> Result<()> {
+pub(crate) fn private_dir(path: impl AsRef<Path>) -> Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -66,7 +66,7 @@ fn allowed(path: &str) -> bool {
 }
 
 // Reject symlinks in every existing component, including the supplied root.
-fn check_path(path: &Path) -> Result<()> {
+pub(crate) fn check_path(path: &Path) -> Result<()> {
     let absolute = std::path::absolute(path)?;
     let mut current = PathBuf::new();
     for component in absolute.components() {
@@ -88,7 +88,7 @@ fn check_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn fingerprint(path: &Path) -> Result<(u64, String)> {
+pub(crate) fn fingerprint(path: &Path) -> Result<(u64, String)> {
     check_path(path)?;
     ensure!(
         fs::metadata(path)?.is_file(),
@@ -110,7 +110,7 @@ fn fingerprint(path: &Path) -> Result<(u64, String)> {
     Ok((size, format!("{:x}", hash.finalize())))
 }
 
-fn inventory(home: &Path) -> Result<Vec<String>> {
+pub(crate) fn inventory(home: &Path) -> Result<Vec<String>> {
     check_path(home)?;
     ensure!(
         home.is_dir(),
@@ -282,7 +282,7 @@ fn verify(path: &Path, entry: &Entry) -> Result<()> {
     Ok(())
 }
 
-fn snapshot_db(source: &Path, dest: &Path) -> Result<()> {
+pub(crate) fn snapshot_db(source: &Path, dest: &Path) -> Result<()> {
     check_path(source)?;
     let connection = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     connection.backup("main", dest, None)?;
@@ -396,11 +396,11 @@ fn encode_lines(values: Vec<serde_json::Value>) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-struct Change {
-    target: PathBuf,
-    staged: PathBuf,
-    before: Option<(u64, String)>,
-    database: bool,
+pub(crate) struct Change {
+    pub target: PathBuf,
+    pub staged: PathBuf,
+    pub before: Option<(u64, String)>,
+    pub database: bool,
 }
 
 fn rebase_state(path: &Path, source_home: Option<&Path>, home: &Path) -> Result<()> {
@@ -553,24 +553,24 @@ pub fn inject(
         println!("No changes; skipped {skipped}; kept {kept_databases} databases");
         return Ok(());
     }
-    private_dir(&home)?;
-    let private = home.join(".syncodex");
-    check_path(&private)?;
-    private_dir(&private)?;
-    let lock_path = private.join("inject.lock");
-    check_path(&lock_path)?;
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(lock_path)?;
-    fs2::FileExt::try_lock_exclusive(&lock).context("Another SynCodex inject is running")?;
-    // Recheck under the SynCodex lock. Codex itself must be stopped by the caller.
+    let recovery = apply_changes(&home, &changes, staging.path())?;
+    println!(
+        "Applied {} files; skipped {skipped}; kept {kept_databases} databases. Recovery originals: {}",
+        changes.len(),
+        recovery.display()
+    );
+    Ok(())
+}
+
+// Inject and rewind share a lock, preflight checks, and durable recovery originals.
+pub(crate) fn apply_changes(home: &Path, changes: &[Change], staging: &Path) -> Result<PathBuf> {
+    let _lock = write_lock(home)?;
+    // Inject operates on an offline home and therefore validates whole databases.
     for (i, change) in changes.iter().enumerate() {
         check_path(&change.target)?;
         let current = if change.target.try_exists()? {
             if change.database {
-                let check = staging.path().join(format!("check-{i}.sqlite"));
+                let check = staging.join(format!("check-{i}.sqlite"));
                 snapshot_db(&change.target, &check)?;
                 Some(fingerprint(&check)?)
             } else {
@@ -584,6 +584,49 @@ pub fn inject(
             "Destination changed during preflight"
         );
     }
+    let recovery = backup_changes(home, changes)?;
+    for change in changes {
+        if change.database && change.target.try_exists()? {
+            let mut db = Connection::open(&change.target)?;
+            db.restore(
+                "main",
+                &change.staged,
+                None::<fn(rusqlite::backup::Progress)>,
+            )?;
+        } else {
+            apply_file(change)?;
+        }
+    }
+    Ok(recovery)
+}
+
+pub(crate) fn write_lock(home: &Path) -> Result<fs::File> {
+    check_path(home)?;
+    private_dir(home)?;
+    let private = home.join(".syncodex");
+    check_path(&private)?;
+    private_dir(&private)?;
+    let lock_path = private.join("inject.lock");
+    check_path(&lock_path)?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)?;
+    fs2::FileExt::try_lock_exclusive(&lock).context("Another SynCodex write is running")?;
+    Ok(lock)
+}
+
+pub(crate) fn backup_changes(home: &Path, changes: &[Change]) -> Result<PathBuf> {
+    backup_changes_with(home, changes, snapshot_db)
+}
+
+pub(crate) fn backup_changes_with(
+    home: &Path,
+    changes: &[Change],
+    mut backup_database: impl FnMut(&Path, &Path) -> Result<()>,
+) -> Result<PathBuf> {
+    let private = home.join(".syncodex");
     let recovery = tempfile::Builder::new()
         .prefix("recovery-")
         .tempdir_in(&private)?;
@@ -592,7 +635,7 @@ pub fn inject(
         if change.target.try_exists()? {
             let backup = recovery.path().join(i.to_string());
             if change.database {
-                snapshot_db(&change.target, &backup)?;
+                backup_database(&change.target, &backup)?;
             } else {
                 write_new(&backup, &change.target)?;
             }
@@ -601,38 +644,26 @@ pub fn inject(
             journal.push(serde_json::json!({"target":change.target,"backup":null,"database":change.database}));
         }
     }
-    fs::write(
-        recovery.path().join("journal.json"),
-        serde_json::to_vec_pretty(&journal)?,
-    )?;
+    let mut journal_file = fs::File::create(recovery.path().join("journal.json"))?;
+    journal_file.write_all(&serde_json::to_vec_pretty(&journal)?)?;
+    journal_file.sync_all()?;
     let recovery = recovery.keep();
-    for change in &changes {
-        if change.database && change.target.try_exists()? {
-            // Restore API updates the destination transactionally, including WAL mode.
-            let mut db = Connection::open(&change.target)?;
-            db.restore(
-                "main",
-                &change.staged,
-                None::<fn(rusqlite::backup::Progress)>,
-            )?;
-        } else if change.before.is_some() {
-            let parent = change.target.parent().unwrap();
-            let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-            std::io::copy(&mut fs::File::open(&change.staged)?, &mut temp)?;
-            temp.as_file().set_times(
-                fs::FileTimes::new().set_modified(fs::metadata(&change.staged)?.modified()?),
-            )?;
-            temp.as_file().sync_all()?;
-            temp.persist(&change.target)?;
-        } else {
-            write_new(&change.target, &change.staged)?;
-        }
+    Ok(recovery)
+}
+
+pub(crate) fn apply_file(change: &Change) -> Result<()> {
+    if change.before.is_some() {
+        let parent = change.target.parent().unwrap();
+        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+        std::io::copy(&mut fs::File::open(&change.staged)?, &mut temp)?;
+        temp.as_file().set_times(
+            fs::FileTimes::new().set_modified(fs::metadata(&change.staged)?.modified()?),
+        )?;
+        temp.as_file().sync_all()?;
+        temp.persist(&change.target)?;
+    } else {
+        write_new(&change.target, &change.staged)?;
     }
-    println!(
-        "Applied {} files; skipped {skipped}; kept {kept_databases} databases. Recovery originals: {}",
-        changes.len(),
-        recovery.display()
-    );
     Ok(())
 }
 

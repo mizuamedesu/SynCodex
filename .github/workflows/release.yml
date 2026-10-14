@@ -29,7 +29,7 @@ jobs:
           rustup default stable
           if [ '${{ runner.os }}' = Linux ]; then
             sudo apt-get update -qq
-            sudo apt-get install -y musl-tools
+            sudo apt-get install -y musl-tools nano
           fi
           # macOS's standard temp directory is reached through /var, a system symlink.
           echo "TMPDIR=$(cd "${TMPDIR:-/tmp}" && pwd -P)" >> "$GITHUB_ENV"
@@ -39,6 +39,7 @@ jobs:
           cargo clippy --locked --all-targets --target '${{ matrix.target }}' -- -D warnings
           cargo test --locked --target '${{ matrix.target }}'
           SYNCODEX_TEST_BINARY="target/${{ matrix.target }}/debug/syncodex" python3 tests/installer.py
+          SYNCODEX_TEST_BINARY="target/${{ matrix.target }}/debug/syncodex" python3 tests/rewind_interactive.py
       - name: Build release
         run: cargo build --release --locked --target '${{ matrix.target }}'
       - name: Package

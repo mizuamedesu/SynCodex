@@ -1,5 +1,10 @@
 mod codex;
+mod rewind;
+mod rollout;
+mod sessions;
 mod storage;
+mod ui;
+mod writer_lock;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -8,7 +13,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     version,
-    about = "Back up, merge and restore Codex conversation history"
+    about = "Back up, merge, restore and rewind Codex conversation history"
 )]
 struct Cli {
     #[arg(long, env = "CODEX_HOME", global = true)]
@@ -40,6 +45,24 @@ enum Command {
     },
     /// List the physical rollouts in a snapshot without printing conversation content
     List { input: PathBuf },
+    /// List local Codex sessions (without starting Codex)
+    Sessions {
+        /// Include archived sessions
+        #[arg(long)]
+        archived: bool,
+        #[arg(long)]
+        search: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read editable user/assistant messages with 1-based numbers
+    Messages {
+        thread_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Edit an unused Codex session and discard later history. Other sessions can stay open.
+    Rewind(rewind::RewindArgs),
     /// Verify restored history using the real Codex app-server (no model turn is sent)
     Verify {
         thread_id: String,
@@ -69,6 +92,15 @@ fn main() -> Result<()> {
             history_only,
         } => storage::inject(&input, &home, &sqlite_home, dry_run, history_only),
         Command::List { input } => storage::list(&input),
+        Command::Sessions {
+            archived,
+            search,
+            json,
+        } => sessions::list(&home, &sqlite_home, archived, search.as_deref(), json),
+        Command::Messages { thread_id, json } => {
+            rewind::messages(&home, &sqlite_home, &thread_id, json)
+        }
+        Command::Rewind(args) => rewind::rewind(&home, &sqlite_home, args),
         Command::Verify {
             thread_id,
             codex,

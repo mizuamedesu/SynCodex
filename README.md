@@ -1,6 +1,6 @@
 # SynCodex
 
-Codex のローカル会話履歴をバックアップ・復元する Rust CLI。JSONL、圧縮済み rollout、入力履歴、会話名、会話用 SQLite を扱います。Codex 0.154.0 で、この開発セッションそのものを別の Codex home に復元し、一覧・本文取得・resume を確認しました。[検証記録](docs/verification.md)
+Codex のローカル会話履歴をバックアップ・復元・編集する Rust CLI。セッション一覧からユーザー／Assistant の発言を選び、本文を変更してその位置まで巻き戻せます。JSONL、圧縮済み rollout、入力履歴、会話名、会話用 SQLite を扱います。復元は Codex 0.154.0、巻き戻しは Codex 0.162.1 の実履歴で本文取得・resume を確認しました。[検証記録](docs/verification.md)
 
 ## インストール
 
@@ -25,7 +25,7 @@ curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/inst
 ```sh
 # バージョン固定、PATH の自動設定を省略
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
-  sh -s -- --version v0.1.0 --no-modify-path
+  sh -s -- --version v0.2.0 --no-modify-path
 
 # スキルを省略・本体の配置先を変更
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
@@ -58,6 +58,65 @@ CODEX_HOME=~/.codex-import codex resume --all
 ```
 
 `verify` は Codex app-server を起動し、`thread/read`、`thread/resume`、ターン・項目の全ページ取得を行います。履歴が指定した home 内にあることも検証します。`--expect-text` はユーザー・アシスタント発言の本文に対して照合し、何度でも指定できます。新しいモデルへの発言は送らず、認証情報のコピーも不要です。ローカルの表示用 DB は Codex によって更新されます。検証対象の Codex は終了しておいてください。
+
+## 発言の編集と巻き戻し (rewind)
+
+Codex CLI・アプリを起動したまま、**使用されていないセッションを編集できます**。一覧の `[使用中]` は Codex が読み込み・書き込み用に保持している会話です。その会話と、参照を解消する必要がある分岐が使用中の場合だけ編集を拒否します。対象の会話を終了・アンロードすれば編集でき、他のセッションを閉じる必要はありません。ソースから使う場合は `cargo run -- rewind` でも起動できます。
+
+```sh
+# 会話選択 → 発言選択 → nano で編集・保存
+syncodex rewind
+
+# Vim を使う場合
+syncodex rewind --vim
+# 同じ指定: syncodex rewind --editor vim
+
+# 会話名・ID・作業ディレクトリで絞り込み。アーカイブも選択対象に含める
+syncodex rewind --search SynCodex --archived
+```
+
+画面上に操作キーと現在の手順を表示します。通常の会話を最初に表示し、承認レビューなど Codex が自動生成した内部会話は F2、アーカイブは F3 で表示を切り替えます。会話一覧には会話名・作業フォルダー・更新日時・使用状態を表示し、詳細側には最初の依頼を表示します。発言一覧では User / Assistant を色で区別し、選択した発言の全文を折り返して表示します。狭い端末では一覧とプレビューを上下に並べます。
+
+| 操作 | キー |
+| --- | --- |
+| 一覧を検索 | 文字を入力、Ctrl+U で検索を消す |
+| 会話・発言を選ぶ | ↑↓ → Enter |
+| 発言の全文をスクロール | PgUp / PgDn、またはプレビュー上のホイール |
+| 本文を編集 | 標準の nano でそのまま入力 |
+| nano で保存 | Ctrl+O → Enter |
+| nano を終了して変更を反映 | Ctrl+X |
+| 保存せず取り消す | Ctrl+X → N |
+| 一覧で前の画面へ戻る | Esc |
+
+nano で本文を保存して終了すると、選んだ発言を編集後の内容で残し、**それより後の発言・ツールの履歴・圧縮された要約を削除**します。同じ本文を保存した場合も後続の巻き戻しは実行します。標準エディターは常に nano です。`--vim` / `--editor vim` で Vim、`--editor 'code --wait'` 等で別のエディターを選べます。Vim は `i` で編集、Esc → `:wq` で保存・終了、Esc → `:q!` で保存せず終了します。
+
+内蔵エディターを使う場合は `--editor builtin` を指定します。Ctrl+A で全選択、Ctrl+Z / Ctrl+Y で元に戻す／やり直す、Ctrl+S で変更前後と削除件数の比較、Enter で反映します。Esc で前の画面に戻り、編集中の内容があれば破棄を確認します。
+
+番号と本文を指定した操作や、反映前の検証もできます。
+
+```sh
+syncodex sessions --search SynCodex
+syncodex sessions --archived --json
+syncodex messages <THREAD_ID>
+
+# messages の 1 始まりの番号を指定。ユーザー／Assistant のどちらも編集可能
+syncodex rewind <THREAD_ID> --message 3 --text '編集後の本文' --dry-run
+syncodex rewind <THREAD_ID> --message 3 --text '編集後の本文'
+
+# 改行を含む UTF-8 ファイルをそのまま使用
+syncodex rewind <THREAD_ID> --message 3 --text-file ./edited-message.md
+
+# 変更後の履歴を再開
+codex resume <THREAD_ID>
+```
+
+`--dry-run` は書き換え対象をすべて準備・検証し、残す発言数・削除する発言数・保全する分岐数を表示します。端末では日本語で結果とバックアップ先・会話の再開コマンドを表示し、`--json` 指定時や出力をパイプした場合は JSON で出力します。通常の実行も同じ検証を行い、変更前の rollout・入力履歴・対象行の SQLite を `<CODEX_HOME>/.syncodex/recovery-*/` に退避してから反映します。保存時は Codex と同じセッション別 writer lock を取得するので、編集中に対象セッションが開かれた場合も反映を拒否します。Codex 0.162.1 で同時利用を検証しました。
+
+モデルが読む本文と表示用の発言記録を一緒に更新し、対象の表示用 SQLite の索引をリセットします。次に対象の会話を読み込むと、新しい履歴を再投影します。SQLite は対象の行だけをトランザクションで更新し、他セッションの新しい変更や共通の backfill 状態を維持します。入力履歴は Codex と共有するファイルロックの中で最新内容を取得し、対象の入力だけを作り直します。同じファイルを更新するため、別セッションがすでに開いている追記用のファイルにも変更が反映されます。プロジェクト・ピン留め・ユーザー指定の会話名、添付のテキスト以外の部分と Assistant の `phase` も維持します。
+
+分岐元の履歴を参照する会話は、変更前の内容を各分岐の rollout に取り込んで参照を解消します。そのため、元セッションの編集が別の分岐に伝播しません。分岐内の継承した発言を編集した場合も、その分岐だけを巻き戻します。参照元が欠けている、参照位置が不正、同じ rollout の圧縮版／通常版が重複する、DB から現在の物理 rollout を特定できない場合は書き込まずに停止します。
+
+対象は会話履歴で、過去のツール操作による作業ファイルの変更は残ります。自動でモデルに発言を送ることはありません。処理全体は複数ファイルをまたぐトランザクションではないため、途中の I/O エラーでは一部が反映される場合があります。元に戻す場合は退避先の `journal.json` に記録された `restore_scope` に従って、rollout は元パスへ、SQLite は `thread_ids` の行だけ、入力履歴は `session_ids` の入力だけを戻してください。rewind の SQLite 退避には対象行だけが入っているため、DB 全体への restore API は使用できません。
 
 ## 既存環境への同期
 
@@ -105,6 +164,7 @@ SQLite は backup API で WAL 内の確定済み更新を含めて保存し、�
 cargo fmt --check
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
+python3 tests/rewind_interactive.py
 
 # 任意: 実際の自分の履歴で検証。Python 3 と codex が必要
 python3 scripts/live_e2e.py \
@@ -112,6 +172,11 @@ python3 scripts/live_e2e.py \
   --output ./backups/my-e2e \
   --thread <THREAD_ID> \
   --expect-text '会話中の文章'
+
+# 任意: 実 Codex の別会話を開き、共有 DB を更新しながら未使用会話を編集・再開
+python3 scripts/live_rewind_e2e.py \
+  --source-rollout /path/to/self-contained-rollout.jsonl \
+  --output ./backups/concurrent-rewind-e2e
 ```
 
 実データのスクリプトは新しいバックアップ・復元先を作成し、ファイルのハッシュ、DB パス、実際の Codex による再開を検証して `report.json` を保存します。元の Codex home に inject / resume は行いません。`backups/` は Git 管理対象外です。

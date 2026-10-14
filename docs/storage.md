@@ -29,7 +29,7 @@ rollout は通常 `rollout-日時-UUID.jsonl` という名前で保存される�
 
 `SessionMeta.history_base` には別 rollout の履歴の一部を参照する仕組みがある。個別会話だけを取り出すには依存関係の解決が必要なので、初期版は両方の履歴ディレクトリをまとめて保存する。分岐元が元から欠けている場合の修復までは行わない。[SessionMeta](https://github.com/openai/codex/blob/a62e98d18c6550e3bea152ed1b89d1e931dca961/codex-rs/protocol/src/protocol.rs)、[rollout 参照索引](https://github.com/openai/codex/blob/a62e98d18c6550e3bea152ed1b89d1e931dca961/codex-rs/rollout/src/rollout_reference_index.rs)。
 
-履歴は追記され、一部は明示的な persist / flush までメモリ上に保持される。ディスクをコピーしても未保存分は取れない。dump / inject 中は、その Codex home を使う CLI・アプリを終了させる必要がある。SynCodex はプロセスの自動停止や Codex の writer lock 取得を行わない。
+履歴は追記され、一部は明示的な persist / flush までメモリ上に保持される。ディスクをコピーしても未保存分は取れない。dump / inject 中は、その Codex home を使う CLI・アプリを終了させる必要がある。dump / inject は Codex の writer lock を取得しない。rewind は後述のセッション別ロックを使い、他のセッションが起動中でも実行できる。
 
 ## SQLite の移行方法
 
@@ -65,6 +65,24 @@ snapshot/
 - 同じ履歴の `.jsonl` と `.jsonl.zst` が転送先で競合する場合は停止する。アーカイブ状態の双方向調停、削除の同期、任意の DB スキーマ間のマイグレーション、外部ファイルの取り込み、リモートストレージへの転送は行わない。
 - `--history-only` は元 DB のプロジェクトや分類を既存環境へマージしない。これらを含む同一状態の移行は新しい home への通常 inject を使う。
 
-## 実機検証
+## 発言編集と巻き戻し
+
+2026-10-14 追記。以下の処理は Codex 0.162.1 での実履歴による検証も行った。
+
+`sessions` / `messages` / `rewind` は選択した Codex home の保存済み rollout を扱う。Codex app-server は起動しない。[公式 app-server 仕様](https://learn.chatgpt.com/docs/app-server) の `thread/revert` はターン境界の削除なので、発言単位の本文編集では使用中でない会話の rollout と表示用データを直接更新する。
+
+- ユーザー／Assistant の `response_item` と対応する `item_completed`・旧形式の `user_message` / `agent_message` を同じ発言として扱い、両方の本文を更新する。環境コンテキストや system/developer 発言、ツール呼び出しは選択一覧から除外する。
+- 保存位置は選択した発言のモデル用・表示用記録の末尾。その位置より後のレコードを切り捨てる。直前までの通常 rollout のバイト列は保持し、保持した途中ターンは `turn_aborted` で閉じる。これにより再開時の表示に実行中のターンが残らない。
+- 選択位置以降の compaction を切り捨て、過去に削除した履歴を後続の要約から復活させない。既存の旧 `thread_rolled_back` によって非表示になったターンも選択対象から除く。
+- multipart content は本文のテキスト部分を置き換え、画像等の部分は維持する。変更した入力本文の `text_elements` は古い範囲情報を取り除く。Assistant の `phase` と発言 ID は保持する。
+- `history_base` は byte offset / ordinal を持つ参照なので、元ファイルの本文長が変わると分岐を壊す。編集対象と、そのファイルを参照する全子孫の継承部分を事前に読み、各会話のメタデータを先頭にした独立 rollout に展開して参照を除く。ordinal を連番に付け直し、subagent の表示開始位置も調整する。子孫の会話本文は編集前の状態を保つ。
+- 対象の `history.jsonl` レコードを保持したユーザー発言から再構築し、他セッションの入力記録は維持する。会話名の索引は保持する。
+- `state_5.sqlite` と `thread_history_1.sqlite` は対象行とそのスキーマだけをステージングし、変更の検証と復旧用 SQLite を作る。反映には現行 DB の `BEGIN IMMEDIATE` トランザクションを使用する。プレビュー・先頭入力・自動タイトル等を更新し、対象と参照を解消した子孫だけの turn / item / projection / realtime 行を削除する。DB 全体を置換せず、他のセッションの更新や backfill 状態、ユーザー指定の名前・プロジェクト・分類・ピン留めを維持する。
+- Codex 0.162.1 と同じ `<CODEX_HOME>/thread-writer-locks/<THREAD_ID>.lock` と `.coordination.lock` を使う。ロックファイルの存在だけでは使用中と判定せず、`std::fs::File::try_lock` の取得可否を見る。実際に書き換える会話と参照を解消する子孫だけの writer lock を保持し、Codex による同じ会話の resume / write と排他する。他の会話の writer は停止させない。`--dry-run` と一覧は既存ロックだけを調べ、新しいロックファイルを作らない。
+- 再検証は対象のファイル・参照解除する子孫の集合・継承した prefix に限定する。編集中の別セッションの追記・新規作成・会話名の変更で一律に失敗しない。読み取りだけに使う継承元は frozen prefix の byte range のみをハッシュで確認するため、継承元が後続の行を追記していても編集できる。
+- `history.jsonl` は Codex と同じファイルロックを取得し、反映直前の最新内容から対象入力だけを置き換える。ファイルの inode を維持して書き換え、既存の追記用 descriptor を使う別セッションの入力を失わない。
+- 全 JSONL・継承参照・SQLite の検証後、inject と共有する SynCodex ロック・Codex writer lock・変更前の退避・rollout の原子的置換・対象行だけの SQL 更新で反映する。複数ファイル全体の原子性は保証しない。退避用 SQLite は対象行のみを含むので、復旧は journal の `restore_scope=thread_rows` と `thread_ids` に従って行単位で行う。
+
+## 復元の実機検証
 
 Codex 0.154.0 と、この開発セッションの実ファイルで検証した。コピー先を指定した app-server が会話を一覧に出し、履歴本文を取得し、`thread/resume` を完了した。実行手順・照合内容・件数は [検証記録](verification.md) を参照。新しいモデルの生成ターンや GUI の操作はこの検証には含めない。

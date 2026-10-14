@@ -4,6 +4,7 @@ import hashlib
 import io
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
@@ -11,6 +12,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+VERSION = re.search(r'^version\s*=\s*"([^"]+)"', (ROOT/'Cargo.toml').read_text(), re.MULTILINE).group(1)
+TAG = f'v{VERSION}'
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
@@ -23,7 +26,7 @@ class InstallerTests(unittest.TestCase):
         self.assets = self.root / "assets"
         self.assets.mkdir()
         self.env = dict(os.environ, HOME=str(self.home), PATH=str(self.fake) + os.pathsep + os.environ['PATH'],
-                        FIXTURE_ASSETS=str(self.assets), FIXTURE_OS='Linux', FIXTURE_ARCH='x86_64')
+                        FIXTURE_ASSETS=str(self.assets), FIXTURE_OS='Linux', FIXTURE_ARCH='x86_64', FIXTURE_TAG=TAG)
         for key in ['SYNCODEX_VERSION', 'SYNCODEX_BIN_DIR', 'SYNCODEX_CODEX_SKILLS_DIR', 'SYNCODEX_CLAUDE_SKILLS_DIR', 'CLAUDE_CONFIG_DIR']:
             self.env.pop(key, None)
         self.tool('uname', '#!/bin/sh\ncase "$1" in -s) echo "$FIXTURE_OS";; -m) echo "$FIXTURE_ARCH";; esac\n')
@@ -31,16 +34,16 @@ class InstallerTests(unittest.TestCase):
 import os,sys,pathlib,shutil
 args=sys.argv[1:]; url=args[-1]
 if url.endswith('/releases/latest'):
- print('https://github.com/mizuamedesu/SynCodex/releases/tag/v0.1.0',end='')
+ print('https://github.com/mizuamedesu/SynCodex/releases/tag/'+os.environ['FIXTURE_TAG'],end='')
 else:
  source=pathlib.Path(os.environ['FIXTURE_ASSETS'])/url.rsplit('/',1)[-1]
  if not source.exists():sys.exit(22)
  shutil.copyfile(source,args[args.index('-o')+1])
 ''')
         for target in ['x86_64-unknown-linux-musl', 'aarch64-apple-darwin']:
-            path = self.assets / f'syncodex-v0.1.0-{target}.tar.gz'
+            path = self.assets / f'syncodex-{TAG}-{target}.tar.gz'
             binary = os.environ.get('SYNCODEX_TEST_BINARY')
-            payload = Path(binary).read_bytes() if binary else b'#!/bin/sh\nprintf "syncodex 0.1.0\\n"\n'
+            payload = Path(binary).read_bytes() if binary else f'#!/bin/sh\nprintf "syncodex {VERSION}\\n"\n'.encode()
             with tarfile.open(path, 'w:gz') as archive:
                 for name, contents, mode in [
                     ('syncodex', payload, 0o755),
@@ -79,7 +82,7 @@ else:
         self.env.update(FIXTURE_OS='Darwin',FIXTURE_ARCH='arm64',
                         SYNCODEX_CODEX_SKILLS_DIR=str(self.home/'codex skills'),CLAUDE_CONFIG_DIR=str(self.home/'claude config'))
         bindir=self.home/"custom 'bin"
-        self.install('--version','v0.1.0','--bin-dir',str(bindir))
+        self.install('--version',TAG,'--bin-dir',str(bindir))
         self.assertTrue((self.home/'codex skills/syncodex/SKILL.md').exists())
         self.assertTrue((self.home/'claude config/skills/syncodex/SKILL.md').exists())
         probe = subprocess.check_output(['sh','-c','. "$HOME/.profile"; command -v syncodex'],env=self.env,text=True)
