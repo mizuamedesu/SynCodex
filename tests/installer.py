@@ -31,7 +31,7 @@ class InstallerTests(unittest.TestCase):
                         FIXTURE_ASSETS=str(self.assets), FIXTURE_OS='Linux', FIXTURE_ARCH='x86_64', FIXTURE_TAG=TAG,
                         FIXTURE_COMMANDS=str(self.fake), FIXTURE_PM_LOG=str(self.root/'packages.jsonl'), FIXTURE_UID='0')
         # Keep package-manager tests isolated from the host's nano, sudo and package managers.
-        for name in ['sh', 'tar', 'awk', 'sed', 'mktemp', 'grep', 'cp', 'chmod', 'mv', 'mkdir', 'rm', 'env', 'sha256sum', 'shasum']:
+        for name in ['sh', 'tar', 'gzip', 'awk', 'sed', 'mktemp', 'grep', 'cp', 'chmod', 'mv', 'mkdir', 'rm', 'env', 'sha256sum', 'shasum']:
             executable = shutil.which(name)
             if executable:
                 (self.fake/name).symlink_to(executable)
