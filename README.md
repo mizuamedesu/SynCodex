@@ -4,13 +4,15 @@ Codex のローカル会話履歴をバックアップ・復元・編集する R
 
 ## インストール
 
-Apple Silicon Mac と x86_64 Linux 向けに、GitHub Releases でビルド済みバイナリを配布します。Rust・sudo は不要です。
+Apple Silicon Mac と x86_64 Linux 向けに、GitHub Releases でビルド済みバイナリを配布します。Rust は不要です。
 
 ```sh
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | sh
 ```
 
-このコマンドで本体・Codex 用スキル・Claude Code 用スキル・今後のシェルの PATH 設定をインストールします。現在のシェルには、最後に表示される `. "$HOME/.local/share/syncodex/env.sh"` を実行するか、ターミナルを開き直すと PATH が反映されます。Codex / Claude Code も再起動するとスキルを検出します。
+このコマンドで本体・Codex 用スキル・Claude Code 用スキル・今後のシェルの PATH 設定をインストールします。標準エディターの nano がない場合も自動導入します。Linux は apt-get / apk / dnf / yum / pacman を使い、root またはパスワード入力なしで利用できる sudo が必要です。Mac は通常付属の nano を使い、ない場合は既存の Homebrew で導入します。nano が既にある環境では sudo は不要です。
+
+現在のシェルには、最後に表示される `. "$HOME/.local/share/syncodex/env.sh"` を実行するか、ターミナルを開き直すと PATH が反映されます。Codex / Claude Code も再起動するとスキルを検出します。
 
 | 内容 | 既定の配置先 |
 | --- | --- |
@@ -25,7 +27,7 @@ curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/inst
 ```sh
 # バージョン固定、PATH の自動設定を省略
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
-  sh -s -- --version v0.2.0 --no-modify-path
+  sh -s -- --version v0.2.1 --no-modify-path
 
 # スキルを省略・本体の配置先を変更
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
@@ -34,6 +36,8 @@ curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/inst
 # ソースからビルドする場合
 cargo install --path . --locked
 ```
+
+Vim や内蔵エディターを使う場合は、インストーラーに `--no-install-editor` を指定すると nano の導入を省略できます。起動時は `syncodex rewind --vim` または `syncodex rewind --editor builtin` を指定してください。
 
 `SYNCODEX_CODEX_SKILLS_DIR`、`SYNCODEX_CLAUDE_SKILLS_DIR` で各スキルの親ディレクトリを変更できます。Claude Code の `CLAUDE_CONFIG_DIR` も尊重します。再実行すると同じインストーラーが管理する本体・スキルを更新します。同名の自作スキルが既にある場合は停止して保持します。既存スキルの編集内容は、管理対象のスキルを更新すると置き換わります。
 

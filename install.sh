@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install SynCodex and its Codex / Claude Code skills. No sudo or Rust required.
+# Install SynCodex, its skills, and nano when missing. No Rust required.
 set -eu
 
 sc_error() { printf 'syncodex installer: %s\n' "$*" >&2; exit 1; }
@@ -25,6 +25,42 @@ sc_profile() {
         printf '\n# SynCodex\n%s\n' "$_sc_source_line" >> "$1"
     fi
 }
+sc_as_root() {
+    if [ "$_sc_sudo" = yes ]; then sudo -n "$@" </dev/null; else "$@" </dev/null; fi
+}
+sc_editor() {
+    [ "$_sc_editor" = yes ] || return 0
+    command -v nano >/dev/null 2>&1 && return 0
+    if [ "$_sc_os" = Darwin ]; then
+        command -v brew >/dev/null 2>&1 || sc_error 'nano is missing. Install nano, or use --no-install-editor with rewind --vim / --editor builtin'
+        printf '%s\n' 'nano is missing; installing with Homebrew.'
+        brew install nano </dev/null || sc_error 'Could not install nano with Homebrew'
+    else
+        _sc_manager=
+        for _sc_candidate in apt-get apk dnf yum pacman; do
+            if command -v "$_sc_candidate" >/dev/null 2>&1; then _sc_manager=$_sc_candidate; break; fi
+        done
+        [ -n "$_sc_manager" ] || sc_error 'nano is missing and no supported package manager was found. Install nano, or use --no-install-editor with rewind --vim / --editor builtin'
+        _sc_sudo=no
+        if [ "$(id -u)" != 0 ]; then
+            if command -v sudo >/dev/null 2>&1 && sudo -n true </dev/null >/dev/null 2>&1; then
+                _sc_sudo=yes
+            else
+                sc_error 'nano is missing. Install nano as root or with sudo, then rerun; or use --no-install-editor with rewind --vim / --editor builtin'
+            fi
+        fi
+        printf 'nano is missing; installing with %s.\n' "$_sc_manager"
+        case "$_sc_manager" in
+            apt-get)
+                sc_as_root apt-get update || sc_error 'Could not update apt package lists for nano'
+                sc_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y nano || sc_error 'Could not install nano with apt-get' ;;
+            apk) sc_as_root apk add --no-cache nano || sc_error 'Could not install nano with apk' ;;
+            dnf|yum) sc_as_root "$_sc_manager" install -y nano || sc_error "Could not install nano with $_sc_manager" ;;
+            pacman) sc_as_root pacman -S --needed --noconfirm nano || sc_error 'Could not install nano with pacman' ;;
+        esac
+    fi
+    command -v nano >/dev/null 2>&1 || sc_error 'nano was installed but is not on PATH. Add it to PATH and rerun, or use --no-install-editor'
+}
 sc_main() {
     _sc_version=${SYNCODEX_VERSION:-latest}
     _sc_bindir=${SYNCODEX_BIN_DIR:-$HOME/.local/bin}
@@ -32,13 +68,15 @@ sc_main() {
     _sc_claude_dir=${SYNCODEX_CLAUDE_SKILLS_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills}/syncodex
     _sc_skills=yes
     _sc_path=yes
+    _sc_editor=yes
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --version) [ "$#" -ge 2 ] || sc_error '--version needs a value'; _sc_version=$2; shift 2 ;;
             --bin-dir) [ "$#" -ge 2 ] || sc_error '--bin-dir needs a value'; _sc_bindir=$2; shift 2 ;;
             --no-skills) _sc_skills=no; shift ;;
             --no-modify-path) _sc_path=no; shift ;;
-            --help) printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--bin-dir PATH] [--no-skills] [--no-modify-path]'; return ;;
+            --no-install-editor) _sc_editor=no; shift ;;
+            --help) printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--bin-dir PATH] [--no-skills] [--no-modify-path] [--no-install-editor]'; return ;;
             *) sc_error "Unknown option: $1" ;;
         esac
     done
@@ -93,6 +131,7 @@ sc_main() {
     fi
     chmod 755 "$_sc_work/syncodex"
     "$_sc_work/syncodex" --version
+    sc_editor
     mkdir -p "$_sc_bindir"
     sc_replace "$_sc_work/syncodex" "$_sc_bindir" syncodex 755
     _sc_data=$HOME/.local/share/syncodex

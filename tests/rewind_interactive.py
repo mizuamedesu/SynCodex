@@ -148,6 +148,18 @@ class InteractiveRewind(unittest.TestCase):
         self.assertEqual(self.rollout.read_bytes(), self.original)
         self.assertFalse(self.home.joinpath(".syncodex").exists())
 
+    def test_missing_nano_explains_install_and_preserves_history(self):
+        directory = self.root / "empty-path"
+        directory.mkdir()
+        status, output = self.terminal(self.choose_first_message(), default_editor=True,
+            env_overrides={"PATH":str(directory)})
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("nano が見つかりません", output)
+        self.assertIn("releases/latest/download/install.sh", output)
+        self.assertIn("syncodex rewind --editor builtin", output)
+        self.assertEqual(self.rollout.read_bytes(), self.original)
+        self.assertFalse(self.home.joinpath(".syncodex").exists())
+
     def test_vim_flag_selects_vim_instead_of_nano(self):
         directory = self.root / "bin"
         directory.mkdir()

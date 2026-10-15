@@ -195,8 +195,16 @@ pub fn rewind(home: &Path, sqlite_home: &Path, args: RewindArgs) -> Result<()> {
                     .extension(".md")
                     .trim_newlines(false)
                     .executable(command);
-                let text = editor.edit(&message.text)
-                    .with_context(|| format!("Could not open editor {command}; use --editor COMMAND to choose another editor"))?;
+                let text = editor.edit(&message.text).map_err(|error| {
+                    let message = if command == "nano"
+                        && matches!(&error, dialoguer::Error::IO(error) if error.kind() == io::ErrorKind::NotFound)
+                    {
+                        "nano が見つかりません。インストーラーを再実行すると nano も導入します: curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | sh\nすぐに内蔵エディターを使う場合: syncodex rewind --editor builtin".to_owned()
+                    } else {
+                        format!("Could not open editor {command}; use --editor COMMAND to choose another editor")
+                    };
+                    anyhow::Error::new(error).context(message)
+                })?;
                 if text.is_none() {
                     return cancelled();
                 }
