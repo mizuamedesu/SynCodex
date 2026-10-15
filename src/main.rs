@@ -1,4 +1,5 @@
 mod codex;
+mod editor;
 mod rewind;
 mod rollout;
 mod sessions;

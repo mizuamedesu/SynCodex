@@ -123,6 +123,45 @@ class InteractiveRewind(unittest.TestCase):
         self.assertEqual(values[2]["payload"]["content"][0]["text"], "変更した依頼😀\n二行目\n")
         self.assertTrue(Path(result["recovery"]).joinpath("journal.json").exists())
 
+    def test_failed_editor_does_not_apply_even_if_it_wrote_the_tempfile(self):
+        self.editor.write_text("from pathlib import Path\nimport sys\nPath(sys.argv[-1]).write_text('must not be applied')\nsys.exit(1)\n")
+        status, output = self.terminal(self.choose_first_message())
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("no history changed", output)
+        self.assertEqual(self.rollout.read_bytes(), self.original)
+        self.assertFalse(self.home.joinpath(".syncodex").exists())
+
+    @unittest.skipUnless(shutil.which("nano"), "nano is not installed")
+    def test_default_nano_handles_non_utf8_and_invalid_locales(self):
+        for locale in ["C", "syncodex_missing_locale.UTF-8"]:
+            with self.subTest(locale=locale):
+                self.rollout.write_bytes(self.original)
+                actions = self.choose_first_message() + [
+                    ("^X", b"\x0b" + "続けて\n日本語😀".encode() + b"\x0f"),
+                    ("File Name", b"\r\x18"),
+                ]
+                status, output = self.terminal(actions, default_editor=True,
+                    env_overrides={"LC_ALL":locale, "LC_CTYPE":"C", "LANG":"C"})
+                self.assertEqual(status, 0, output)
+                values = [json.loads(line) for line in self.rollout.read_text().splitlines()]
+                self.assertEqual(values[2]["payload"]["content"][0]["text"].rstrip("\n"), "続けて\n日本語😀")
+                self.assertEqual(self.result(output)["removed_messages"], 1)
+
+    @unittest.skipUnless(shutil.which("nano"), "nano is not installed")
+    def test_default_nano_uses_utf8_without_locale_utility(self):
+        directory = self.root / "only-nano"
+        directory.mkdir()
+        (directory/"nano").symlink_to(shutil.which("nano"))
+        actions = self.choose_first_message() + [
+            ("^X", b"\x0b" + "続けて😀".encode() + b"\x0f"),
+            ("File Name", b"\r\x18"),
+        ]
+        status, output = self.terminal(actions, default_editor=True,
+            env_overrides={"PATH":str(directory), "LC_ALL":"C", "LANG":"C"})
+        self.assertEqual(status, 0, output)
+        values = [json.loads(line) for line in self.rollout.read_text().splitlines()]
+        self.assertEqual(values[2]["payload"]["content"][0]["text"].rstrip("\n"), "続けて😀")
+
     @unittest.skipUnless(shutil.which("nano"), "nano is not installed")
     def test_default_nano_saves_and_overrides_editor_environment(self):
         actions = self.choose_first_message() + [

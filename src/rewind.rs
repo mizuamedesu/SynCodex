@@ -1,4 +1,5 @@
 use crate::{
+    editor,
     rollout::{self, Loader, Message, Record},
     sessions::{self, Catalog},
     storage::{self, Change},
@@ -7,7 +8,6 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use clap::Args;
-use dialoguer::Editor;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use serde_json::{Value, json};
 use std::{
@@ -190,21 +190,7 @@ pub fn rewind(home: &Path, sqlite_home: &Path, args: RewindArgs) -> Result<()> {
                     }
                     _ => {}
                 }
-                let mut editor = Editor::new();
-                editor
-                    .extension(".md")
-                    .trim_newlines(false)
-                    .executable(command);
-                let text = editor.edit(&message.text).map_err(|error| {
-                    let message = if command == "nano"
-                        && matches!(&error, dialoguer::Error::IO(error) if error.kind() == io::ErrorKind::NotFound)
-                    {
-                        "nano が見つかりません。インストーラーを再実行すると nano も導入します: curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | sh\nすぐに内蔵エディターを使う場合: syncodex rewind --editor builtin".to_owned()
-                    } else {
-                        format!("Could not open editor {command}; use --editor COMMAND to choose another editor")
-                    };
-                    anyhow::Error::new(error).context(message)
-                })?;
+                let text = editor::edit(&message.text, command)?;
                 if text.is_none() {
                     return cancelled();
                 }

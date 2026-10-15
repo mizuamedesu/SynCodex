@@ -27,7 +27,7 @@ curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/inst
 ```sh
 # バージョン固定、PATH の自動設定を省略
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
-  sh -s -- --version v0.2.1 --no-modify-path
+  sh -s -- --version v0.2.2 --no-modify-path
 
 # スキルを省略・本体の配置先を変更
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | \
@@ -93,6 +93,10 @@ syncodex rewind --search SynCodex --archived
 | 一覧で前の画面へ戻る | Esc |
 
 nano で本文を保存して終了すると、選んだ発言を編集後の内容で残し、**それより後の発言・ツールの履歴・圧縮された要約を削除**します。同じ本文を保存した場合も後続の巻き戻しは実行します。標準エディターは常に nano です。`--vim` / `--editor vim` で Vim、`--editor 'code --wait'` 等で別のエディターを選べます。Vim は `i` で編集、Esc → `:wq` で保存・終了、Esc → `:q!` で保存せず終了します。
+
+日本語を正しく入力できるよう、外部エディターの文字コードを確認します。`LC_ALL=C` や存在しないロケールが指定されている場合は、利用できる UTF-8 ロケールをエディターに渡します。現在のシェルの設定は変更しません。nano 側も UTF-8 の設定を必要とします。[nano 公式 FAQ](https://www.nano-editor.org/dist/v9/faq.html)
+
+エディターがエラー終了した場合は、途中で一時ファイルを書き込んでいても履歴を変更しません。正常に保存・終了した場合だけ巻き戻します。
 
 内蔵エディターを使う場合は `--editor builtin` を指定します。Ctrl+A で全選択、Ctrl+Z / Ctrl+Y で元に戻す／やり直す、Ctrl+S で変更前後と削除件数の比較、Enter で反映します。Esc で前の画面に戻り、編集中の内容があれば破棄を確認します。
 

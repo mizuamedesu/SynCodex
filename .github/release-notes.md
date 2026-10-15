@@ -1,10 +1,10 @@
-nano が入っていない環境で `syncodex rewind` がエディター起動エラーになる問題を修正しました。
+`LC_ALL=C` などの環境で、日本語を入力すると `^Z` などの制御文字として扱われる問題に対応しました。
 
-- インストーラーが nano の有無を確認し、未導入ならパッケージマネージャーで自動導入
-- Linux は apt-get / apk / dnf / yum / pacman に対応。root またはパスワード入力なしの sudo を使用
-- Mac は付属の nano を使用し、ない場合は既存の Homebrew で導入
-- Vim / 内蔵エディターを使う場合は `--no-install-editor` で nano の導入を省略可能
-- nano が見つからない場合のエラーに、インストーラーの再実行と内蔵エディターの起動方法を表示
+- 外部エディターの文字コードを確認し、非 UTF-8 または無効なロケールでは利用可能な UTF-8 ロケールを自動選択
+- 子プロセスにだけ設定を渡し、既存の UTF-8 設定と現在のシェルの環境を維持
+- `locale` コマンドがない最小構成の環境にも対応
+- エディターがエラー終了した場合は、一時ファイルに編集があっても履歴の巻き戻しを拒否
+- nano の自動導入、標準 nano / 任意の Vim、セッション別の使用状態判定を継続
 
 ```sh
 curl -fsSL https://github.com/mizuamedesu/SynCodex/releases/latest/download/install.sh | sh
